@@ -128,6 +128,13 @@ branch, a tag, added/modified/deleted files). It refuses to run inside an existi
 Branches (click `fix/typo` to highlight it) → Strategy → Analytics → Time Machine (drag backwards, then
 *Return to present*) → Learn.
 
+## Releases
+
+Merging a pull request into `master` tags the merge commit and publishes a GitHub Release automatically
+(`.github/workflows/auto-tag.yml`). Add one label to the PR to choose the version bump: `major`, `minor`,
+`patch` (the default when unlabelled) or `skip` for no release. The workflow runs on GitHub only; the app
+itself never writes to a repository.
+
 ## Tests
 
 ```bash
