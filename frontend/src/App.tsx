@@ -7,6 +7,7 @@ import { AppLayout } from './components/layout/AppLayout'
 import type { View } from './components/layout/Sidebar'
 import { Welcome, rememberRepo } from './components/layout/Welcome'
 import { LearnView } from './components/learn/LearnView'
+import { CompareView } from './components/compare/CompareView'
 import { StrategyView } from './components/strategy/StrategyView'
 import { GitTimeMachine } from './components/timeline/GitTimeMachine'
 import { useRepository } from './hooks/useRepository'
@@ -40,7 +41,8 @@ export default function App() {
     )
   } else if (view === 'branches') {
     content = <BranchExplorer highlight={r.highlight} onHighlight={r.highlightBranch} onShowGraph={() => setView('graph')} />
-  } else if (view === 'strategy') content = <StrategyView />
+  } else if (view === 'compare') content = <CompareView />
+  else if (view === 'strategy') content = <StrategyView />
   else if (view === 'analytics') content = <AnalyticsDashboard />
   else content = <GitTimeMachine />
 

@@ -1,6 +1,6 @@
 import { Loader2 } from 'lucide-react'
 import { useAsync } from '../../hooks/useAsync'
-import { api } from '../../services/api'
+import type { FileDiff as FileDiffData } from '../../types/git'
 
 const lineClass = (line: string): string => {
   if (line.startsWith('+++') || line.startsWith('---')) return 'text-mute'
@@ -11,8 +11,8 @@ const lineClass = (line: string): string => {
 }
 
 /** Renders a unified diff as plain text (React escapes everything; no HTML injection). */
-export function FileDiff({ sha, path }: { sha: string; path: string }) {
-  const { data, error, loading } = useAsync((s) => api.diff(sha, path, s), [sha, path])
+export function FileDiff({ cacheKey, load }: { cacheKey: string; load: (s: AbortSignal) => Promise<FileDiffData> }) {
+  const { data, error, loading } = useAsync(load, [cacheKey])
 
   if (loading) return <p className="flex items-center gap-2 p-3 text-mute"><Loader2 size={14} className="animate-spin" /> Loading diff…</p>
   if (error) return <p role="alert" className="p-3 text-del">{error}</p>

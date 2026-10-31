@@ -21,7 +21,8 @@ export function AppLayout({ repo, commitCount, hasMore, view, onView, onSwitchRe
     <div className="flex h-full flex-col">
       <header className="flex h-11 shrink-0 items-center gap-4 border-b border-line bg-panel px-4">
         <span className="flex items-center gap-2 font-semibold"><GitBranch size={16} className="text-accent" />{APP_NAME}</span>
-        {repo && <span className="truncate text-mute" title={repo.path}>{repo.name}</span>}
+        {repo && <span className="truncate text-mute" title={repo.remote_url ?? repo.path}>
+          {repo.remote_url ? repo.remote_url.replace('https://github.com/', '').replace(/\.git$/, '') : repo.name}</span>}
         <button onClick={onSwitchRepo} className="ml-auto flex items-center gap-1.5 rounded border border-line px-2.5 py-1 hover:border-accent">
           <FolderOpen size={14} /> {repo ? 'Open another repository' : 'Open Repository'}
         </button>
@@ -34,7 +35,7 @@ export function AppLayout({ repo, commitCount, hasMore, view, onView, onSwitchRe
       <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-panel px-4 text-[12px] text-mute">
         {repo ? (
           <>
-            <span>Read-only</span>
+            <span>Read-only{repo.remote_url ? ' · GitHub download (temporary copy)' : ''}</span>
             <span>Branch: <span className="text-ink">{branchLabel}</span></span>
             {repo.is_bare && <span>bare repository</span>}
             {repo.is_empty ? <span>Empty repository</span> : <span>{plural(commitCount, 'commit')} loaded{hasMore ? ' (more available)' : ''}</span>}

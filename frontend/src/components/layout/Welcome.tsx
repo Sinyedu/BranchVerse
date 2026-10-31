@@ -1,6 +1,7 @@
 import { BookOpen, FolderGit2, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { APP_NAME } from '../../lib/formatters'
+import { looksLikeUrl } from '../../lib/source'
 
 const RECENT_KEY = 'branchverse.recent'
 
@@ -38,20 +39,26 @@ export function Welcome({ loading, error, onOpen, onLearn, onCancel }: Props) {
         <p className="mt-2 text-[15px] text-mute">Understand your repository. Explore its history.</p>
 
         <form className="mt-8" onSubmit={(e) => { e.preventDefault(); submit(path) }}>
-          <label htmlFor="repo-path" className="mb-1 block text-mute">Path to a local Git repository</label>
+          <label htmlFor="repo-path" className="mb-1 block text-mute">Local repository path, or a public GitHub link</label>
           <div className="flex gap-2">
             <input id="repo-path" value={path} onChange={(e) => setPath(e.target.value)} autoFocus spellCheck={false}
-              placeholder="C:\Users\you\projects\my-repo" aria-invalid={error ? true : undefined}
+              placeholder="C:\Users\you\my-repo   or   https://github.com/owner/repo" aria-invalid={error ? true : undefined}
               className="min-w-0 flex-1 rounded border border-line bg-panel px-3 py-2 font-mono" />
             <button type="submit" disabled={loading || !path.trim()}
               className="flex items-center gap-2 rounded bg-accent px-4 py-2 font-medium text-bg hover:brightness-110 disabled:opacity-50">
               {loading ? <Loader2 size={15} className="animate-spin" /> : <FolderGit2 size={15} />}
-              {loading ? 'Opening…' : 'Open Repository'}
+              {loading ? (looksLikeUrl(path) ? 'Downloading…' : 'Opening…') : 'Open Repository'}
             </button>
           </div>
+          {loading && looksLikeUrl(path) && (
+            <p role="status" className="mt-2 text-mute">
+              Downloading history from GitHub (commits only, not file contents). This can take up to a few minutes for large repositories.
+            </p>
+          )}
           {error && <p role="alert" className="mt-2 text-del">{error}</p>}
           <p className="mt-2 text-[12px] text-mute">
-            Read-only and local: {APP_NAME} never changes your repository or contacts the network.
+            Read-only: {APP_NAME} never changes a repository. Local repositories stay fully offline; a pasted GitHub
+            link downloads a temporary copy of that public repository's history, and nothing else is sent anywhere.
           </p>
         </form>
 

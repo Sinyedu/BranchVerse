@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.errors import GitCommandError, InvalidInput, NotFound
+from ..core import git_runner
 from ..core.git_runner import run_git
-from ..core.security import validate_repo_path_input, validate_sha
+from ..core.security import parse_github_url, validate_repo_path_input, validate_sha
 from ..schemas.git import (
     Branch,
     BranchList,
     Commit,
     CommitDetails,
     CommitPage,
+    Compare,
     Comparison,
     FileChange,
     FileDiff,
@@ -42,9 +45,36 @@ _STATUS = {
 class Repo:
     root: Path
     is_bare: bool
+    remote_url: str | None = None
 
 
 # --------------------------------------------------------------------- open
+
+
+def open_github(raw_url: str) -> Repo:
+    """Download a public GitHub repository (blobless, bare) into the cache and open it."""
+    owner, name = parse_github_url(raw_url)
+    return _clone_and_open(f"https://github.com/{owner}/{name}.git", owner, name)
+
+
+def _clone_and_open(clean_url: str, owner: str, name: str) -> Repo:
+    parent = git_runner.CACHE_ROOT / "github"
+    parent.mkdir(parents=True, exist_ok=True)
+    prefix = f"{owner.lower()}__{name.lower()}__"
+    dest = parent / f"{prefix}{secrets.token_hex(4)}"
+    git_runner.clone_bare(clean_url, dest)
+    try:
+        repo = open_repository(str(dest))
+    except Exception:
+        git_runner.remove_tree(dest)
+        raise
+    for old in parent.glob(prefix + "*"):  # drop earlier downloads of the same repo
+        if old != dest:
+            try:
+                git_runner.remove_tree(old)
+            except OSError:
+                pass
+    return Repo(repo.root, True, remote_url=clean_url)
 
 
 def open_repository(raw_path: str) -> Repo:
@@ -97,6 +127,7 @@ def repository_info(repo: Repo) -> RepositoryInfo:
         is_detached=head is not None and branch is None,
         current_branch=branch,
         head_sha=head,
+        remote_url=repo.remote_url,
     )
 
 
@@ -146,18 +177,9 @@ def _to_int(value: str) -> int:
         return 0
 
 
-def get_commits(repo: Repo, limit: int, offset: int) -> CommitPage:
-    if not 1 <= limit <= MAX_PAGE:
-        raise InvalidInput(f"limit must be between 1 and {MAX_PAGE}.")
-    if offset < 0:
-        raise InvalidInput("offset must not be negative.")
+def _read_commits(repo: Repo, log_args: list[str]) -> list[Commit]:
     out = run_git(
-        repo.root,
-        [
-            "log", "--all", "--topo-order", "-z",
-            f"--skip={offset}", f"--max-count={limit + 1}",
-            f"--format={_LOG_FORMAT}",
-        ],
+        repo.root, ["log", "-z", *log_args, f"--format={_LOG_FORMAT}"],
     ).text()
     tokens = out.split("\x00")
     if tokens and tokens[-1] == "":
@@ -166,7 +188,6 @@ def get_commits(repo: Repo, limit: int, offset: int) -> CommitPage:
     commits: list[Commit] = []
     for i in range(0, len(tokens) - _LOG_FIELDS + 1, _LOG_FIELDS):
         sha, parents, name, email, ts, subject, deco = tokens[i : i + _LOG_FIELDS]
-        # In -z mode records are NUL-terminated; a leading newline can appear.
         sha = sha.lstrip("\n")
         commits.append(
             Commit(
@@ -180,6 +201,17 @@ def get_commits(repo: Repo, limit: int, offset: int) -> CommitPage:
                 refs=_parse_decorations(deco, local, remote),
             )
         )
+    return commits
+
+
+def get_commits(repo: Repo, limit: int, offset: int) -> CommitPage:
+    if not 1 <= limit <= MAX_PAGE:
+        raise InvalidInput(f"limit must be between 1 and {MAX_PAGE}.")
+    if offset < 0:
+        raise InvalidInput("offset must not be negative.")
+    commits = _read_commits(
+        repo, ["--all", "--topo-order", f"--skip={offset}", f"--max-count={limit + 1}"]
+    )
     return CommitPage(
         commits=commits[:limit], offset=offset, has_more=len(commits) > limit
     )
@@ -298,9 +330,14 @@ def get_file_diff(repo: Repo, sha: str, path: str) -> FileDiff:
         raise InvalidInput("Invalid file path.")
     parents = run_git(repo.root, ["show", "-s", "--format=%P", sha]).text().split()
     base = parents[0] if parents else None
-    match = next((f for f in changed_files(repo, sha, base) if f.path == path), None)
+    return _diff_one_file(repo, base, sha, changed_files(repo, sha, base), path)
+
+
+def _diff_one_file(repo: Repo, base: str | None, sha: str, files: list[FileChange], path: str) -> FileDiff:
+    """Diff `path` between base and sha. `path` must be one of the known changed files."""
+    match = next((f for f in files if f.path == path), None)
     if match is None:
-        raise NotFound("That file was not changed by this commit.")
+        raise NotFound("That file was not changed here.")
     if match.binary:
         return FileDiff(path=path, binary=True, diff="", truncated=False, diff_base=base)
     specs = [match.old_path, match.path] if match.old_path else [match.path]
@@ -346,6 +383,10 @@ def _left_right(repo: Repo, base: str, tip: str) -> tuple[int, int] | None:
 
 
 def _default_ref(repo: Repo, heads: set[str], remotes: set[str]) -> str | None:
+    if repo.is_bare:  # a bare clone's HEAD names the remote's default branch
+        head = run_git(repo.root, ["symbolic-ref", "-q", "HEAD"], check=False)
+        if head.ok and head.text().strip() in heads:
+            return head.text().strip()
     r = run_git(repo.root, ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"], check=False)
     target = r.text().strip()
     if r.ok and target in remotes:
@@ -418,3 +459,65 @@ def get_reachable(repo: Repo, full_ref: str) -> Reachable:
     return Reachable(
         full_ref=full_ref, shas=out[:MAX_REACHABLE], truncated=len(out) > MAX_REACHABLE
     )
+
+
+# ------------------------------------------------------------------ compare
+
+MAX_COMPARE_COMMITS = 100
+
+
+def _branch_tips(repo: Repo) -> dict[str, str]:
+    out = run_git(
+        repo.root,
+        ["for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/remotes"],
+    ).text()
+    tips = {}
+    for line in out.splitlines():
+        ref, _, sha = line.partition("\x00")
+        if sha:
+            tips[ref] = sha
+    return tips
+
+
+def _resolve_compare(repo: Repo, base_ref: str, head_ref: str):
+    tips = _branch_tips(repo)  # refs must come from the repository's own branch list
+    if base_ref not in tips or head_ref not in tips:
+        raise NotFound("Unknown branch.")
+    base_sha, head_sha = tips[base_ref], tips[head_ref]
+    mb = run_git(repo.root, ["merge-base", base_sha, head_sha], check=False)
+    return base_sha, head_sha, (mb.text().strip() or None) if mb.ok else None
+
+
+def get_compare(repo: Repo, base_ref: str, head_ref: str) -> Compare:
+    base_sha, head_sha, merge_base = _resolve_compare(repo, base_ref, head_ref)
+    counts = _left_right(repo, base_sha, head_sha) or (0, 0)
+    commits = _read_commits(
+        repo,
+        ["--topo-order", f"--max-count={MAX_COMPARE_COMMITS + 1}", f"{base_sha}..{head_sha}"],
+    )
+    files = changed_files(repo, head_sha, merge_base)
+    if merge_base is None:
+        note = "These branches share no history, so every file on the compare branch is shown as added."
+    elif counts[1] == 0:
+        note = "The compare branch has no commits of its own: it is already contained in the base branch."
+    elif counts[0] == 0:
+        note = "Can be fast-forwarded: the base branch has no commits that the compare branch lacks."
+    else:
+        note = ("Changes are measured from the merge base, as a pull request does, so "
+                "work added to the base branch since the split is not counted.")
+    return Compare(
+        base=_short(base_ref), head=_short(head_ref), base_sha=base_sha, head_sha=head_sha,
+        merge_base=merge_base, ahead=counts[1], behind=counts[0],
+        commits=commits[:MAX_COMPARE_COMMITS], commits_truncated=len(commits) > MAX_COMPARE_COMMITS,
+        files=files[:MAX_FILES], files_truncated=len(files) > MAX_FILES,
+        total_additions=sum(f.additions or 0 for f in files),
+        total_deletions=sum(f.deletions or 0 for f in files),
+        note=note,
+    )
+
+
+def get_compare_file_diff(repo: Repo, base_ref: str, head_ref: str, path: str) -> FileDiff:
+    if not path or "\x00" in path or len(path) > 4096:
+        raise InvalidInput("Invalid file path.")
+    _, head_sha, merge_base = _resolve_compare(repo, base_ref, head_ref)
+    return _diff_one_file(repo, merge_base, head_sha, changed_files(repo, head_sha, merge_base), path)

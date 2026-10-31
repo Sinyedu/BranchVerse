@@ -1,5 +1,5 @@
 import type {
-  Analytics, BranchList, CommitDetails, CommitPage, FileDiff, Reachable,
+  Analytics, BranchList, Compare, CommitDetails, CommitPage, FileDiff, Reachable,
   RepositoryInfo, Snapshot, Strategy, Timeline,
 } from '../types/git'
 
@@ -61,11 +61,17 @@ const q = (params: Record<string, string | number>) =>
 export const api = {
   open: (path: string, signal?: AbortSignal) =>
     request<RepositoryInfo>('/api/repositories/open', { method: 'POST', body: { path }, signal }),
+  openUrl: (url: string, signal?: AbortSignal) =>
+    request<RepositoryInfo>('/api/repositories/open-url', { method: 'POST', body: { url }, signal }),
   commits: (limit: number, offset: number, signal?: AbortSignal) =>
     request<CommitPage>('/api/commits' + q({ limit, offset }), { signal }),
   commit: (sha: string, signal?: AbortSignal) => request<CommitDetails>(`/api/commits/${sha}`, { signal }),
   diff: (sha: string, path: string, signal?: AbortSignal) =>
     request<FileDiff>(`/api/commits/${sha}/diff` + q({ path }), { signal }),
+  compare: (base: string, head: string, signal?: AbortSignal) =>
+    request<Compare>('/api/compare' + q({ base, head }), { signal }),
+  compareDiff: (base: string, head: string, path: string, signal?: AbortSignal) =>
+    request<FileDiff>('/api/compare/diff' + q({ base, head, path }), { signal }),
   branches: (signal?: AbortSignal) => request<BranchList>('/api/branches', { signal }),
   reachable: (ref: string, signal?: AbortSignal) =>
     request<Reachable>('/api/branches/reachable' + q({ ref }), { signal }),

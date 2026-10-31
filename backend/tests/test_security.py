@@ -60,7 +60,7 @@ def test_output_cap_truncates_or_raises(demo_path):
 
 
 def test_missing_git_is_reported(monkeypatch, demo_path):
-    monkeypatch.setattr(git_runner, "_clean_env", lambda: {"PATH": ""})
+    monkeypatch.setattr(git_runner, "_clean_env", lambda *a: {"PATH": ""})
     monkeypatch.setattr(git_runner.subprocess, "Popen",
                         lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
     with pytest.raises(GitUnavailable):

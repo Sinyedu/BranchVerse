@@ -90,16 +90,17 @@ def get_analytics(repo: Repo, days: int = 180) -> Analytics:
     # The window is anchored to the newest commit (not "today") so dormant
     # repositories still show their most recent activity.
     since = f"--max-age={max(stamps) - days * 86400}"
+    changes_available = repo.remote_url is None  # blobless clones have no file contents
     raw = run_git(
         repo.root,
         ["log", "--all", "--no-merges", since, "--numstat", "--format=%x01%at"],
         max_bytes=16 * 1024 * 1024,
         truncate_ok=True,
         timeout=30,
-    )
+    ) if changes_available else None
     change_weeks: dict[datetime, WeekBucket] = {}
     current: WeekBucket | None = None
-    for line in raw.text().splitlines():
+    for line in (raw.text().splitlines() if raw else []):
         if line.startswith("\x01"):
             current = _bucket(change_weeks, int(line[1:] or 0))
         elif current is not None and (m := _NUMSTAT.match(line)):
@@ -114,11 +115,14 @@ def get_analytics(repo: Repo, days: int = 180) -> Analytics:
         scope += (
             f" Contributor and weekly figures cover the newest {SCAN_LIMIT:,} commits only."
         )
-    scope += (
-        f" Line changes cover the {days} days before the newest commit"
-        " (merge commits excluded)."
-    )
-    if raw.truncated:
+    if changes_available:
+        scope += (
+            f" Line changes cover the {days} days before the newest commit"
+            " (merge commits excluded)."
+        )
+    else:
+        scope += " Line-change statistics are unavailable for repositories opened from GitHub."
+    if raw and raw.truncated:
         scope += " Line-change totals were cut off because the output was very large."
 
     return Analytics(
@@ -136,4 +140,5 @@ def get_analytics(repo: Repo, days: int = 180) -> Analytics:
         scan_truncated=truncated,
         scan_limit=SCAN_LIMIT,
         scope_note=scope,
+        changes_available=changes_available,
     )

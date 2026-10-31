@@ -43,3 +43,8 @@ class GitOutputTooLarge(BranchVerseError):
 class GitCommandError(BranchVerseError):
     status_code = 500
     code = "git_error"
+
+
+class Busy(BranchVerseError):
+    status_code = 409
+    code = "busy"

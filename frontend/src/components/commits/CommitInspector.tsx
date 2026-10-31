@@ -79,7 +79,7 @@ export function CommitInspector({ sha, onSelect }: { sha: string | null; onSelec
                   </span>
                 </button>
                 {file === f.path && (
-                  <div className="my-1 overflow-hidden rounded border border-line bg-bg"><FileDiff sha={data.sha} path={f.path} /></div>
+                  <div className="my-1 overflow-hidden rounded border border-line bg-bg"><FileDiff cacheKey={`${data.sha}:${f.path}`} load={(s) => api.diff(data.sha, f.path, s)} /></div>
                 )}
               </li>
             )

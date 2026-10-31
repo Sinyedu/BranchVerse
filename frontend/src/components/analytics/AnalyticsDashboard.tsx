@@ -41,10 +41,17 @@ export function AnalyticsDashboard() {
       <div className="mt-5 space-y-4">
         <BarChart title="Commits per week" data={data.weekly_commits}
           series={[{ key: 'commits', label: 'Commits', color: SERIES_A }]} emptyText="No commits in range." />
-        <BarChart title={`Lines changed per week · ${data.changes_days} days before the newest commit`}
-          data={data.weekly_changes}
-          series={[{ key: 'additions', label: 'Additions', color: SERIES_A }, { key: 'deletions', label: 'Deletions', color: SERIES_B }]}
-          emptyText="No line changes in this period." />
+        {data.changes_available ? (
+          <BarChart title={`Lines changed per week · ${data.changes_days} days before the newest commit`}
+            data={data.weekly_changes}
+            series={[{ key: 'additions', label: 'Additions', color: SERIES_A }, { key: 'deletions', label: 'Deletions', color: SERIES_B }]}
+            emptyText="No line changes in this period." />
+        ) : (
+          <p className="rounded-lg border border-line bg-panel p-4 text-mute">
+            Line-change statistics need file contents, which are not downloaded for repositories opened from GitHub.
+            Commit, contributor and branch analytics above are complete.
+          </p>
+        )}
 
         <section className="rounded-lg border border-line bg-panel p-4">
           <h3 className="font-semibold">Contributors by commit count</h3>

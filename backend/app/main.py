@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from .api.repositories import router
 from .core.errors import BranchVerseError
+from .core.git_runner import prune_cache
 from .core.security import (
     DEFAULT_ORIGINS,
     TOKEN_HEADER,
@@ -37,6 +38,7 @@ def create_app(
         env = os.environ.get("BRANCHVERSE_ALLOWED_ORIGINS")
         allowed_origins = tuple(o.strip() for o in env.split(",")) if env else DEFAULT_ORIGINS
 
+    prune_cache()  # drop stale GitHub downloads from earlier sessions
     app = FastAPI(title="BranchVerse", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.repo = None
     app.state.token = token or new_session_token()

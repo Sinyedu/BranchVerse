@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { api } from '../services/api'
 import type { Branch, Commit, RepositoryInfo } from '../types/git'
+import { looksLikeUrl } from '../lib/source'
 import { errorMessage } from './useAsync'
 
 export const PAGE_SIZE = 100
@@ -37,7 +38,7 @@ export function useRepository() {
     const mine = ++generation.current
     setState((s) => ({ ...initial, status: 'loading', repo: s.repo }))
     try {
-      const repo = await api.open(path, ctl.signal)
+      const repo = looksLikeUrl(path) ? await api.openUrl(path, ctl.signal) : await api.open(path, ctl.signal)
       const page = await api.commits(PAGE_SIZE, 0, ctl.signal)
       if (mine !== generation.current) return
       loaded.current = page.commits.length

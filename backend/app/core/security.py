@@ -57,3 +57,31 @@ def new_session_token() -> str:
 
 def token_valid(supplied: str | None, expected: str) -> bool:
     return bool(supplied) and secrets.compare_digest(supplied, expected)
+
+
+_GH_URL = re.compile(r"^https://github\.com/([^/?#\s]+)/([^/?#\s]+)(?:[/?#]\S*)?$")
+_GH_OWNER = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+_GH_REPO = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+
+
+def parse_github_url(raw: str) -> tuple[str, str]:
+    """Return (owner, repo) for a public github.com repository URL, else raise.
+
+    Pasted browser URLs (".../tree/main", "?tab=readme") are accepted, but the
+    caller must rebuild a clean URL from the returned parts; nothing else from
+    the input is ever used.
+    """
+    if not isinstance(raw, str) or "\x00" in raw or len(raw) > 2048:
+        raise InvalidInput("That is not a valid GitHub repository URL.")
+    text = raw.strip()
+    if text.lower().startswith("github.com/"):
+        text = "https://" + text
+    m = _GH_URL.match(text)
+    if not m:
+        raise InvalidInput("Paste a link like https://github.com/owner/repository.")
+    owner, repo = m.group(1), m.group(2)
+    if repo.lower().endswith(".git"):
+        repo = repo[:-4]
+    if not _GH_OWNER.fullmatch(owner) or not _GH_REPO.fullmatch(repo) or repo in {".", ".."}:
+        raise InvalidInput("That is not a valid GitHub owner or repository name.")
+    return owner, repo

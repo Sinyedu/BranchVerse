@@ -11,6 +11,10 @@ class OpenRepositoryRequest(BaseModel):
     path: str = Field(max_length=4096)
 
 
+class OpenUrlRequest(BaseModel):
+    url: str = Field(max_length=2048)
+
+
 class RepositoryInfo(BaseModel):
     name: str
     path: str
@@ -19,6 +23,7 @@ class RepositoryInfo(BaseModel):
     is_detached: bool
     current_branch: str | None
     head_sha: str | None
+    remote_url: str | None = None
 
 
 class RefLabel(BaseModel):
@@ -135,6 +140,7 @@ class Analytics(BaseModel):
     scan_truncated: bool
     scan_limit: int
     scope_note: str
+    changes_available: bool = True
 
 
 class TimelineCommit(BaseModel):
@@ -192,3 +198,20 @@ class Strategy(BaseModel):
     merged_branches: list[str]
     unmerged_branches: list[str]
     sampled_commits: int
+
+
+class Compare(BaseModel):
+    base: str
+    head: str
+    base_sha: str
+    head_sha: str
+    merge_base: str | None
+    ahead: int
+    behind: int
+    commits: list[Commit]
+    commits_truncated: bool
+    files: list[FileChange]
+    files_truncated: bool
+    total_additions: int
+    total_deletions: int
+    note: str

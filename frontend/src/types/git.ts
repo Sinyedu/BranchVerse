@@ -8,6 +8,7 @@ export interface RepositoryInfo {
   is_detached: boolean
   current_branch: string | null
   head_sha: string | null
+  remote_url: string | null
 }
 export interface RefLabel { name: string; kind: RefKind }
 export interface Commit {
@@ -92,6 +93,7 @@ export interface Analytics {
   scan_truncated: boolean
   scan_limit: number
   scope_note: string
+  changes_available: boolean
 }
 
 export interface TimelineCommit {
@@ -129,4 +131,21 @@ export interface Strategy {
   merged_branches: string[]
   unmerged_branches: string[]
   sampled_commits: number
+}
+
+export interface Compare {
+  base: string
+  head: string
+  base_sha: string
+  head_sha: string
+  merge_base: string | null
+  ahead: number
+  behind: number
+  commits: Commit[]
+  commits_truncated: boolean
+  files: FileChange[]
+  files_truncated: boolean
+  total_additions: number
+  total_deletions: number
+  note: string
 }

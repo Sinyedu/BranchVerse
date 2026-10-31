@@ -38,6 +38,13 @@ def open_repository(body: s.OpenRepositoryRequest, request: Request):
     return git_service.repository_info(repo)
 
 
+@router.post("/repositories/open-url", response_model=s.RepositoryInfo)
+def open_url(body: s.OpenUrlRequest, request: Request):
+    repo = git_service.open_github(body.url)
+    request.app.state.repo = repo
+    return git_service.repository_info(repo)
+
+
 @router.get("/repositories/current", response_model=s.RepositoryInfo)
 def current(request: Request):
     return git_service.repository_info(_repo(request))
@@ -86,3 +93,18 @@ def snapshot(sha: str, request: Request):
 @router.get("/strategy", response_model=s.Strategy)
 def strategy(request: Request):
     return strategy_service.get_strategy(_repo(request))
+
+
+@router.get("/compare", response_model=s.Compare)
+def compare(request: Request, base: str = Query(max_length=1024), head: str = Query(max_length=1024)):
+    return git_service.get_compare(_repo(request), base, head)
+
+
+@router.get("/compare/diff", response_model=s.FileDiff)
+def compare_diff(
+    request: Request,
+    base: str = Query(max_length=1024),
+    head: str = Query(max_length=1024),
+    path: str = Query(max_length=4096),
+):
+    return git_service.get_compare_file_diff(_repo(request), base, head, path)

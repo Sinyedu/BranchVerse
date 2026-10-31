@@ -3,7 +3,7 @@
 > Understand your repository. Explore its history.
 
 BranchVerse is a local, **read-only** web app for exploring Git repositories visually — and for learning how
-branching works. Open any repository on your machine to see its commit graph, branches, contributors, a
+branching works. Open a repository on your machine — or paste a public GitHub link — to see its commit graph, branches, contributors, a
 branching-strategy summary, and a "Time Machine" through its history. New to Git? The **Learn** section walks
 through commits, branches, merges and the common branching strategies with small interactive graphs.
 
@@ -16,6 +16,7 @@ through commits, branches, merges and the common branching strategies with small
 | **Commit graph** | Custom SVG graph with lanes, merge commits, root commits, branch/tag labels, pagination (100 at a time) and continuation markers |
 | **Commit inspector** | Full metadata, parents (merge commits compare against the first parent, labelled), changed files, bounded text diffs |
 | **Branch explorer** | Local/remote branches, ahead/behind vs upstream *or* the default branch (clearly labelled), highlight everything reachable from a branch |
+| **Compare** | A pull-request-style view of any two branches: commits ahead/behind, files changed from the merge base, expandable diffs. Read-only — nothing is merged |
 | **Strategy** | Describes what the history looks like (trunk-based / feature-branch / GitFlow-like) with the evidence behind the label |
 | **Analytics** | Unique commits, contributors, commits per week, additions/deletions per week, scope stated for every metric |
 | **Time Machine** | Slide through HEAD's first-parent history; file lists and changes are read from Git objects — no checkout |
@@ -45,9 +46,24 @@ continues in the same lane, extra parents (merges) reuse a lane already waiting 
 Lanes still open after the last loaded row are drawn as dashed continuations — never as false edges. Layout is
 prefix-stable, so "Load more" does not move existing rows.
 
+## Opening a GitHub repository
+
+Paste `https://github.com/owner/repo` on the welcome screen. The backend downloads a temporary **blobless bare
+clone** (all commits, branches, tags and file trees, but no file contents) into a cache folder under your temp
+directory, then reads it like any other repository. File contents for a diff are fetched on demand. Copies older
+than 24 hours are deleted at startup, and re-opening a repo replaces its earlier copy.
+
+* Only `https://github.com/<owner>/<repo>` links are accepted; the clone URL is rebuilt from the validated owner
+  and name, so nothing else from what you paste reaches Git.
+* The download has a 3-minute timeout, a 750 MB disk cap, and only one runs at a time.
+* Public repositories only — no credentials are used or stored.
+* Line-change statistics are unavailable for these repositories (they need file contents).
+
 ## Security model
 
 BranchVerse is for **trusted local use, not public hosting**. Repositories are treated as untrusted input.
+Local repositories are read fully offline. The only network access is the GitHub download above, restricted to
+`https`, and afterwards only for repositories inside the cache folder.
 
 * Git is run with argument arrays (never a shell), from an allow-list of read-only subcommands.
 * Hooks, `core.fsmonitor`, external diff, textconv and pagers are disabled; user/system Git config and inherited
@@ -115,9 +131,11 @@ cd frontend && pnpm test -- --run && pnpm build
 * Time Machine follows HEAD's first-parent history only — it does not reconstruct every branch's past state.
 * Strategy detection is a heuristic over branch names and merge shape; squash-merge workflows look linear.
 * SHA-1 repositories only (40-hex IDs). Submodules appear as single entries.
+* GitHub downloads need Git's blobless-clone support (Git 2.19+) and a GitHub-reachable network; very large
+  repositories can hit the time or size limit. Pull-request *numbers* are not fetched yet — Compare works on branches.
 * One repository open at a time; nothing is persisted except a short list of recent paths in `localStorage`.
 
 ## Roadmap
 
-Multiple saved repositories and side-by-side strategy comparison, interactive "sandbox" lessons with guided
+Fetching GitHub pull requests by number (`refs/pull/N/head`), multiple saved repositories and side-by-side strategy comparison, interactive "sandbox" lessons with guided
 exercises, tag/release timeline, bare-repo and worktree polish, SHA-256 support.
