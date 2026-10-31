@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Path, Query, Request
 
+from ..core import cache
 from ..core.errors import NoRepository
 from ..schemas import git as s
-from ..services import analytics_service, git_service, strategy_service, timeline_service
+from ..services import analytics_service, git_service, pull_service, strategy_service, timeline_service
 from ..services.git_service import Repo
 
 router = APIRouter(prefix="/api")
@@ -34,6 +35,7 @@ def session(request: Request) -> dict[str, str]:
 @router.post("/repositories/open", response_model=s.RepositoryInfo)
 def open_repository(body: s.OpenRepositoryRequest, request: Request):
     repo = git_service.open_repository(body.path)
+    cache.forget(repo.root)  # reopening always shows fresh data
     request.app.state.repo = repo
     return git_service.repository_info(repo)
 
@@ -41,6 +43,7 @@ def open_repository(body: s.OpenRepositoryRequest, request: Request):
 @router.post("/repositories/open-url", response_model=s.RepositoryInfo)
 def open_url(body: s.OpenUrlRequest, request: Request):
     repo = git_service.open_github(body.url)
+    cache.forget(repo.root)
     request.app.state.repo = repo
     return git_service.repository_info(repo)
 
@@ -108,3 +111,13 @@ def compare_diff(
     path: str = Query(max_length=4096),
 ):
     return git_service.get_compare_file_diff(_repo(request), base, head, path)
+
+
+@router.get("/pulls/{number}", response_model=s.PullRequest)
+def pull(request: Request, number: int = Path(ge=1, le=10_000_000)):
+    return pull_service.get_pull(_repo(request), number)
+
+
+@router.get("/pulls/{number}/diff", response_model=s.FileDiff)
+def pull_diff(request: Request, number: int = Path(ge=1, le=10_000_000), path: str = Query(max_length=4096)):
+    return pull_service.get_pull_diff(_repo(request), number, path)

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from ..core.cache import cached
 from ..core.errors import GitOutputTooLarge, GitTimeout, InvalidInput
-from ..core.git_runner import run_git
+from ..core.git_runner import iter_git, run_git
 from ..core.security import validate_sha
 from ..schemas.git import PathChange, Snapshot, Timeline, TimelineCommit
 from .git_service import Repo, changed_files, ensure_commit, head_sha
@@ -66,6 +67,10 @@ def _file_count_series(repo: Repo, commits: list[TimelineCommit]) -> None:
 
 
 def get_timeline(repo: Repo) -> Timeline:
+    return cached(repo, "timeline", lambda: _compute_timeline(repo))
+
+
+def _compute_timeline(repo: Repo) -> Timeline:
     if head_sha(repo) is None:
         return Timeline(commits=[], truncated=False, note="This repository has no commits on HEAD.")
     commits, truncated = _first_parent_commits(repo)
@@ -84,17 +89,18 @@ def _changes(files, status: str) -> list[PathChange]:
 def get_snapshot(repo: Repo, sha: str) -> Snapshot:
     validate_sha(sha)
     ensure_commit(repo, sha)
-    commits, _ = _first_parent_commits(repo)
-    order = [c.sha for c in commits]
+    order = [c.sha for c in get_timeline(repo).commits]  # cached per repository state
     if sha not in order:
         raise InvalidInput("That commit is not on the current first-parent timeline.")
     idx = order.index(sha)
     previous = order[idx - 1] if idx > 0 else None
 
-    names = run_git(
-        repo.root, ["ls-tree", "-r", "-z", "--name-only", sha], max_bytes=16 * 1024 * 1024
-    ).text().split("\x00")
-    names = sorted(n for n in names if n)
+    names: list[str] = []
+    file_count = 0
+    for rec in iter_git(repo.root, ["ls-tree", "-r", "-z", "--name-only", sha], max_bytes=64 * 1024 * 1024):
+        file_count += 1  # count everything, but keep only what the UI can show
+        if len(names) < MAX_FILES_LISTED:
+            names.append(rec.decode("utf-8", errors="replace"))
 
     files = changed_files(repo, sha, previous)
     added = _changes(files, "added")
@@ -104,9 +110,9 @@ def get_snapshot(repo: Repo, sha: str) -> Snapshot:
     return Snapshot(
         sha=sha,
         previous_sha=previous,
-        file_count=len(names),
-        files=names[:MAX_FILES_LISTED],
-        files_truncated=len(names) > MAX_FILES_LISTED,
+        file_count=file_count,
+        files=names,
+        files_truncated=file_count > MAX_FILES_LISTED,
         added=added[:MAX_LISTED],
         deleted=deleted[:MAX_LISTED],
         modified=modified[:MAX_LISTED],

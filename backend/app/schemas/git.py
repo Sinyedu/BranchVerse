@@ -215,3 +215,23 @@ class Compare(BaseModel):
     total_additions: int
     total_deletions: int
     note: str
+
+
+class PullMeta(BaseModel):
+    number: int
+    title: str
+    state: Literal["open", "closed", "merged", "unknown"]
+    draft: bool
+    author: str | None
+    body: str
+    url: str
+    base_ref: str | None
+    head_label: str | None
+    created_at: str | None
+    metadata_available: bool
+    note: str | None = None
+
+
+class PullRequest(BaseModel):
+    meta: PullMeta
+    compare: Compare

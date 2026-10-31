@@ -6,8 +6,9 @@ import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from ..core.errors import InvalidInput
-from ..core.git_runner import run_git
+from ..core.cache import cached
+from ..core.errors import GitOutputTooLarge, InvalidInput
+from ..core.git_runner import iter_git, run_git
 from ..schemas.git import Analytics, Contributor, WeekBucket
 from .git_service import Repo
 
@@ -44,6 +45,10 @@ def _bucket(buckets: dict[datetime, WeekBucket], ts: int) -> WeekBucket:
 def get_analytics(repo: Repo, days: int = 180) -> Analytics:
     if not 1 <= days <= 730:
         raise InvalidInput("days must be between 1 and 730.")
+    return cached(repo, "analytics", lambda: _compute_analytics(repo, days), days)
+
+
+def _compute_analytics(repo: Repo, days: int) -> Analytics:
 
     refs = run_git(repo.root, ["for-each-ref", "--format=%(refname)"]).text().splitlines()
     local = sum(r.startswith("refs/heads/") for r in refs)
@@ -58,25 +63,30 @@ def get_analytics(repo: Repo, days: int = 180) -> Analytics:
 
     total = int(run_git(repo.root, ["rev-list", "--all", "--count"]).text().strip() or 0)
 
-    scan = run_git(
-        repo.root,
-        ["log", "--all", "-z", f"--max-count={SCAN_LIMIT}", "--format=%an%x00%ae%x00%at"],
-        max_bytes=32 * 1024 * 1024,
-    ).text().split("\x00")
-    if scan and scan[-1] == "":
-        scan.pop()
-
+    # Stream the history: memory stays proportional to the aggregates, not to commit count.
     counts: Counter[str] = Counter()
     names: dict[str, str] = {}
     weeks: dict[datetime, WeekBucket] = {}
-    stamps: list[int] = []
-    for i in range(0, len(scan) - 2, 3):
-        name, email, ts = scan[i], scan[i + 1], int(scan[i + 2] or 0)
+    latest = 0
+    seen = 0
+    fields: list[str] = []
+    for rec in iter_git(
+        repo.root,
+        ["log", "--all", "-z", f"--max-count={SCAN_LIMIT}", "--format=%an%x00%ae%x00%at"],
+    ):
+        fields.append(rec.decode("utf-8", errors="replace").lstrip("\n"))
+        if len(fields) < 3:
+            continue
+        name, email, ts_raw = fields
+        fields = []
+        ts = int(ts_raw or 0)
         key = email.lower()
         counts[key] += 1
         names.setdefault(key, name)  # newest commit's display name wins
-        stamps.append(ts)
+        latest = max(latest, ts)
+        seen += 1
         _bucket(weeks, ts).commits += 1
+    stamps = [latest] if seen else [0]
 
     contributors = [
         Contributor(name=names[k], email=k, commits=c) for k, c in counts.most_common()
@@ -91,23 +101,26 @@ def get_analytics(repo: Repo, days: int = 180) -> Analytics:
     # repositories still show their most recent activity.
     since = f"--max-age={max(stamps) - days * 86400}"
     changes_available = repo.remote_url is None  # blobless clones have no file contents
-    raw = run_git(
-        repo.root,
-        ["log", "--all", "--no-merges", since, "--numstat", "--format=%x01%at"],
-        max_bytes=16 * 1024 * 1024,
-        truncate_ok=True,
-        timeout=30,
-    ) if changes_available else None
     change_weeks: dict[datetime, WeekBucket] = {}
     current: WeekBucket | None = None
-    for line in (raw.text().splitlines() if raw else []):
-        if line.startswith("\x01"):
-            current = _bucket(change_weeks, int(line[1:] or 0))
-        elif current is not None and (m := _NUMSTAT.match(line)):
-            if m.group(1) != "-":
-                current.additions += int(m.group(1))
-            if m.group(2) != "-":
-                current.deletions += int(m.group(2))
+    changes_cut_off = False
+    if changes_available:
+        try:
+            for rec in iter_git(
+                repo.root,
+                ["log", "--all", "--no-merges", since, "--numstat", "--format=%x01%at"],
+                sep=b"\n", timeout=30, max_bytes=64 * 1024 * 1024,
+            ):
+                line = rec.decode("utf-8", errors="replace")
+                if line.startswith("\x01"):
+                    current = _bucket(change_weeks, int(line[1:] or 0))
+                elif current is not None and (m := _NUMSTAT.match(line)):
+                    if m.group(1) != "-":
+                        current.additions += int(m.group(1))
+                    if m.group(2) != "-":
+                        current.deletions += int(m.group(2))
+        except GitOutputTooLarge:
+            changes_cut_off = True
 
     truncated = total > SCAN_LIMIT
     scope = f"All commits reachable from any branch or tag ({total:,} unique commits)."
@@ -122,7 +135,7 @@ def get_analytics(repo: Repo, days: int = 180) -> Analytics:
         )
     else:
         scope += " Line-change statistics are unavailable for repositories opened from GitHub."
-    if raw and raw.truncated:
+    if changes_cut_off:
         scope += " Line-change totals were cut off because the output was very large."
 
     return Analytics(

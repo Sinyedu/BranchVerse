@@ -1,4 +1,5 @@
 import { Tag } from 'lucide-react'
+import { memo } from 'react'
 import { relativeTime } from '../../lib/formatters'
 import type { Commit, RefLabel } from '../../types/git'
 import { ROW_H } from './GraphEdges'
@@ -12,25 +13,26 @@ const chip: Record<RefLabel['kind'], string> = {
 
 interface Props {
   commit: Commit
+  row: number
   paddingLeft: number
   selected: boolean
   dimmed: boolean
-  onSelect: () => void
+  onSelect: (sha: string) => void
   onHover: (sha: string | null) => void
 }
 
-/** One text row of the graph. The node itself is drawn in the shared SVG. */
-export function CommitNode({ commit, paddingLeft, selected, dimmed, onSelect, onHover }: Props) {
+/** One text row of the graph (the node itself is drawn in the shared SVG). Memoised: hovering only re-renders changed rows. */
+export const CommitNode = memo(function CommitNode({ commit, row, paddingLeft, selected, dimmed, onSelect, onHover }: Props) {
   return (
     <button
       id={`row-${commit.sha}`}
       type="button"
-      onClick={onSelect}
+      onClick={() => onSelect(commit.sha)}
       onMouseEnter={() => onHover(commit.sha)}
       onMouseLeave={() => onHover(null)}
       aria-pressed={selected}
-      style={{ height: ROW_H, paddingLeft }}
-      className={`flex w-full items-center gap-3 pr-3 text-left transition-colors hover:bg-raised/70 ${
+      style={{ position: 'absolute', top: row * ROW_H, left: 0, right: 0, height: ROW_H, paddingLeft }}
+      className={`flex items-center gap-3 pr-3 text-left transition-colors hover:bg-raised/70 ${
         selected ? 'bg-raised' : ''} ${dimmed ? 'opacity-35' : ''}`}
     >
       <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -48,4 +50,4 @@ export function CommitNode({ commit, paddingLeft, selected, dimmed, onSelect, on
       <span className="w-14 shrink-0 font-mono text-[11px] text-mute">{commit.short_sha}</span>
     </button>
   )
-}
+})

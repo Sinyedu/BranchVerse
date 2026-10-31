@@ -7,6 +7,7 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from .api.repositories import router
@@ -69,6 +70,7 @@ def create_app(
     async def _unexpected(_: Request, __: Exception):
         return _error(500, "internal_error", "Unexpected server error.")
 
+    app.add_middleware(GZipMiddleware, minimum_size=1024)  # smaller payloads for big lists
     # Added last so it is outermost and answers CORS preflights first.
     app.add_middleware(
         CORSMiddleware,

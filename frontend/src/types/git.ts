@@ -149,3 +149,19 @@ export interface Compare {
   total_deletions: number
   note: string
 }
+
+export interface PullMeta {
+  number: number
+  title: string
+  state: 'open' | 'closed' | 'merged' | 'unknown'
+  draft: boolean
+  author: string | null
+  body: string
+  url: string
+  base_ref: string | null
+  head_label: string | null
+  created_at: string | null
+  metadata_available: boolean
+  note: string | null
+}
+export interface PullRequest { meta: PullMeta; compare: Compare }

@@ -17,6 +17,7 @@ through commits, branches, merges and the common branching strategies with small
 | **Commit inspector** | Full metadata, parents (merge commits compare against the first parent, labelled), changed files, bounded text diffs |
 | **Branch explorer** | Local/remote branches, ahead/behind vs upstream *or* the default branch (clearly labelled), highlight everything reachable from a branch |
 | **Compare** | A pull-request-style view of any two branches: commits ahead/behind, files changed from the merge base, expandable diffs. Read-only — nothing is merged |
+| **GitHub pull requests** | For repositories opened from GitHub, enter a PR number (`123`, `#123` or a PR link) to see its title, state, author, commits and diffs — including merged and closed PRs |
 | **Strategy** | Describes what the history looks like (trunk-based / feature-branch / GitFlow-like) with the evidence behind the label |
 | **Analytics** | Unique commits, contributors, commits per week, additions/deletions per week, scope stated for every metric |
 | **Time Machine** | Slide through HEAD's first-parent history; file lists and changes are read from Git objects — no checkout |
@@ -59,11 +60,20 @@ than 24 hours are deleted at startup, and re-opening a repo replaces its earlier
 * Public repositories only — no credentials are used or stored.
 * Line-change statistics are unavailable for these repositories (they need file contents).
 
+**Pull requests by number.** GitHub exposes every PR as `refs/pull/N/head`. BranchVerse fetches just that ref
+(blobless) into a private `refs/branchverse/pr/N`, then builds the same view as *Compare*. Title, state, author and
+the PR's recorded base commit come from GitHub's public REST API (`api.github.com`, unauthenticated, 8 s timeout,
+1 MB limit; the 60 requests/hour limit applies). If the API is unavailable the PR is compared with the default
+branch and the UI says so. Merged and closed PRs use GitHub's recorded base commit, so their diff matches what was
+reviewed rather than appearing empty.
+
 ## Security model
 
 BranchVerse is for **trusted local use, not public hosting**. Repositories are treated as untrusted input.
-Local repositories are read fully offline. The only network access is the GitHub download above, restricted to
-`https`, and afterwards only for repositories inside the cache folder.
+Local repositories are read fully offline. The only network access is the GitHub download and PR fetch above
+(Git over `https`, only for repositories inside the cache folder) plus one fixed `api.github.com` request per PR
+lookup, built from a validated owner, repository and integer; its response is size-limited, type-checked and
+shown as plain text, and redirects off `api.github.com` are refused.
 
 * Git is run with argument arrays (never a shell), from an allow-list of read-only subcommands.
 * Hooks, `core.fsmonitor`, external diff, textconv and pagers are disabled; user/system Git config and inherited
@@ -124,6 +134,18 @@ cd backend  && .venv/Scripts/python -m pytest        # uses real temporary Git r
 cd frontend && pnpm test -- --run && pnpm build
 ```
 
+## Performance
+
+* **Streaming, not buffering:** analytics, file lists and line-change totals are read from Git as a stream, so
+  memory stays proportional to the result, not the repository (peak Python memory was ≤ 8 MB on a synthetic
+  5,000-commit, 40-branch repository).
+* **Cached per repository state:** analytics, strategy, timeline and branch data are memoised and invalidated
+  automatically when any ref or HEAD changes (a 2-second recheck window; reopening always re-checks).
+* **One Git call for all branch comparisons** (Git ≥ 2.41; older Git falls back to parallel calls).
+* **Virtualised commit graph:** only rows near the viewport are in the DOM, so very long histories scroll
+  smoothly. Secondary views are lazy-loaded, API responses are gzip-compressed, and large diffs render 1,500
+  lines at a time.
+
 ## Known limitations
 
 * Loads 100 commits per page; very large histories are paged, not virtualised. Analytics scan at most the
@@ -132,10 +154,10 @@ cd frontend && pnpm test -- --run && pnpm build
 * Strategy detection is a heuristic over branch names and merge shape; squash-merge workflows look linear.
 * SHA-1 repositories only (40-hex IDs). Submodules appear as single entries.
 * GitHub downloads need Git's blobless-clone support (Git 2.19+) and a GitHub-reachable network; very large
-  repositories can hit the time or size limit. Pull-request *numbers* are not fetched yet — Compare works on branches.
+  repositories can hit the time or size limit. PR details need the GitHub API (60 requests/hour unauthenticated).
 * One repository open at a time; nothing is persisted except a short list of recent paths in `localStorage`.
 
 ## Roadmap
 
-Fetching GitHub pull requests by number (`refs/pull/N/head`), multiple saved repositories and side-by-side strategy comparison, interactive "sandbox" lessons with guided
+Optional GitHub token for higher API limits, multiple saved repositories and side-by-side strategy comparison, interactive "sandbox" lessons with guided
 exercises, tag/release timeline, bare-repo and worktree polish, SHA-256 support.

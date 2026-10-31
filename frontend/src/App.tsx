@@ -1,16 +1,18 @@
-import { useEffect, useState } from 'react'
-import { AnalyticsDashboard } from './components/analytics/AnalyticsDashboard'
-import { BranchExplorer } from './components/branches/BranchExplorer'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { CommitInspector } from './components/commits/CommitInspector'
 import { CommitGraph } from './components/graph/CommitGraph'
 import { AppLayout } from './components/layout/AppLayout'
 import type { View } from './components/layout/Sidebar'
 import { Welcome, rememberRepo } from './components/layout/Welcome'
-import { LearnView } from './components/learn/LearnView'
-import { CompareView } from './components/compare/CompareView'
-import { StrategyView } from './components/strategy/StrategyView'
-import { GitTimeMachine } from './components/timeline/GitTimeMachine'
 import { useRepository } from './hooks/useRepository'
+
+// Secondary views load on first use, keeping the initial bundle small.
+const AnalyticsDashboard = lazy(() => import('./components/analytics/AnalyticsDashboard').then((m) => ({ default: m.AnalyticsDashboard })))
+const BranchExplorer = lazy(() => import('./components/branches/BranchExplorer').then((m) => ({ default: m.BranchExplorer })))
+const LearnView = lazy(() => import('./components/learn/LearnView').then((m) => ({ default: m.LearnView })))
+const CompareView = lazy(() => import('./components/compare/CompareView').then((m) => ({ default: m.CompareView })))
+const StrategyView = lazy(() => import('./components/strategy/StrategyView').then((m) => ({ default: m.StrategyView })))
+const GitTimeMachine = lazy(() => import('./components/timeline/GitTimeMachine').then((m) => ({ default: m.GitTimeMachine })))
 
 export default function App() {
   const r = useRepository()
@@ -41,7 +43,7 @@ export default function App() {
     )
   } else if (view === 'branches') {
     content = <BranchExplorer highlight={r.highlight} onHighlight={r.highlightBranch} onShowGraph={() => setView('graph')} />
-  } else if (view === 'compare') content = <CompareView />
+  } else if (view === 'compare') content = <CompareView isGitHub={!!r.repo?.remote_url} />
   else if (view === 'strategy') content = <StrategyView />
   else if (view === 'analytics') content = <AnalyticsDashboard />
   else content = <GitTimeMachine />
@@ -53,7 +55,7 @@ export default function App() {
     <AppLayout repo={hasRepo ? r.repo : null} commitCount={r.commits.length} hasMore={r.hasMore} view={view}
       onView={(v) => { setView(v); if (v !== 'learn') setPicking(!hasRepo) }}
       onSwitchRepo={() => { setView('graph'); setPicking(true) }} inspector={inspector}>
-      {content}
+      <Suspense fallback={<p className="p-6 text-mute">Loading…</p>}>{content}</Suspense>
     </AppLayout>
   )
 }

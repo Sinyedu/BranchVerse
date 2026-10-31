@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from ..core.cache import cached
 from ..core.git_runner import run_git
 from ..schemas.git import BranchPrefix, Evidence, Strategy
 from .git_service import Repo, get_branches
@@ -16,6 +17,10 @@ GITFLOW_PREFIXES = {"feature", "release", "hotfix", "bugfix"}
 
 
 def get_strategy(repo: Repo) -> Strategy:
+    return cached(repo, "strategy", lambda: _compute_strategy(repo))
+
+
+def _compute_strategy(repo: Repo) -> Strategy:
     result = get_branches(repo)
     local = [b for b in result.branches if not b.is_remote]
     default = next((b for b in result.branches if b.name == result.default_branch), None)

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.errors import GitCommandError, InvalidInput, NotFound
+from concurrent.futures import ThreadPoolExecutor
+
 from ..core import git_runner
+from ..core.cache import cached
 from ..core.git_runner import run_git
 from ..core.security import parse_github_url, validate_repo_path_input, validate_sha
 from ..schemas.git import (
@@ -397,6 +401,48 @@ def _default_ref(repo: Repo, heads: set[str], remotes: set[str]) -> str | None:
 
 
 def get_branches(repo: Repo) -> BranchList:
+    return cached(repo, "branches", lambda: _compute_branches(repo))
+
+
+_TRACK = re.compile(r"ahead (\d+)|behind (\d+)")
+
+
+def _bulk_counts(repo, rows, plans, default):
+    """(behind, ahead) for every branch from ONE `for-each-ref` (needs Git >= 2.41), else None."""
+    if not any(plans):
+        return [None] * len(rows)
+    fmt = "%(refname)%00%(ahead-behind:{})%00%(upstream)%00%(upstream:track,nobracket)".format(
+        default if default else "HEAD")
+    r = run_git(repo.root, ["for-each-ref", f"--format={fmt}", "refs/heads", "refs/remotes"], check=False)
+    if not r.ok:
+        return None
+    info = {}
+    for line in r.text().splitlines():
+        parts = line.split("\x00")
+        if len(parts) == 4:
+            info[parts[0]] = parts
+    out = []
+    for (ref, *_), plan in zip(rows, plans):
+        got = info.get(ref)
+        if plan is None or got is None:
+            out.append(None)
+        elif plan[0] == "default":
+            nums = got[1].split()
+            out.append((int(nums[1]), int(nums[0])) if len(nums) == 2 else None)
+        else:  # upstream: Git's own tracking summary; empty means in sync, [gone] means missing
+            track = got[3]
+            if track == "gone":
+                out.append(None)
+            else:
+                a = b = 0
+                for m in _TRACK.finditer(track):
+                    a += int(m.group(1) or 0)
+                    b += int(m.group(2) or 0)
+                out.append((b, a))
+    return out
+
+
+def _compute_branches(repo: Repo) -> BranchList:
     out = run_git(
         repo.root,
         ["for-each-ref", f"--format={_REF_FORMAT}", "refs/heads", "refs/remotes"],
@@ -410,29 +456,47 @@ def get_branches(repo: Repo) -> BranchList:
     remotes = {r[0] for r in rows if r[0].startswith("refs/remotes/")}
     default = _default_ref(repo, heads, remotes)
 
+    # Plan: which base (if any) each branch is compared with.
+    plans: list[tuple[str, str] | None] = []
+    for n, (ref, _sha, _date, upstream, _head, _sym) in enumerate(rows):
+        is_remote = ref.startswith("refs/remotes/")
+        if n >= MAX_COMPARISONS:
+            plans.append(None)
+        elif upstream and not is_remote:
+            plans.append(("upstream", upstream))
+        elif default and ref != default:
+            plans.append(("default", default))
+        else:
+            plans.append(None)
+
+    counts_all = _bulk_counts(repo, rows, plans, default)
+    if counts_all is None:  # older Git: independent read-only subprocesses, run in parallel
+        def run(item):
+            (ref, *_), plan = item
+            return _left_right(repo, plan[1], ref) if plan else None
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            counts_all = list(pool.map(run, zip(rows, plans)))
+
     branches: list[Branch] = []
-    for n, (ref, sha, date, upstream, head_mark, _) in enumerate(rows):
+    for n, ((ref, sha, date, _up, head_mark, _), plan, counts) in enumerate(zip(rows, plans, counts_all)):
         is_remote = ref.startswith("refs/remotes/")
         comp = Comparison(kind="none", base=None, ahead=None, behind=None,
                           note="No upstream or default branch to compare with.")
         if n >= MAX_COMPARISONS:
             comp.note = "Comparison skipped: too many branches."
-        elif upstream and not is_remote:
-            counts = _left_right(repo, upstream, ref)
+        elif plan and plan[0] == "upstream":
             comp = Comparison(
-                kind="upstream", base=_short(upstream),
+                kind="upstream", base=_short(plan[1]),
                 behind=counts[0] if counts else None,
                 ahead=counts[1] if counts else None,
                 note=None if counts else "Upstream branch no longer exists.",
             )
-        elif default and ref != default:
-            counts = _left_right(repo, default, ref)
-            if counts:
-                comp = Comparison(
-                    kind="default", base=_short(default),
-                    behind=counts[0], ahead=counts[1],
-                    note="Compared with the default branch (no upstream).",
-                )
+        elif plan and counts:
+            comp = Comparison(
+                kind="default", base=_short(plan[1]), behind=counts[0], ahead=counts[1],
+                note="Compared with the default branch (no upstream).",
+            )
         branches.append(
             Branch(
                 name=_short(ref), full_ref=ref, is_remote=is_remote,
@@ -490,6 +554,12 @@ def _resolve_compare(repo: Repo, base_ref: str, head_ref: str):
 
 def get_compare(repo: Repo, base_ref: str, head_ref: str) -> Compare:
     base_sha, head_sha, merge_base = _resolve_compare(repo, base_ref, head_ref)
+    return build_compare(repo, _short(base_ref), _short(head_ref), base_sha, head_sha, merge_base)
+
+
+def build_compare(
+    repo: Repo, base: str, head: str, base_sha: str, head_sha: str, merge_base: str | None
+) -> Compare:
     counts = _left_right(repo, base_sha, head_sha) or (0, 0)
     commits = _read_commits(
         repo,
@@ -506,7 +576,7 @@ def get_compare(repo: Repo, base_ref: str, head_ref: str) -> Compare:
         note = ("Changes are measured from the merge base, as a pull request does, so "
                 "work added to the base branch since the split is not counted.")
     return Compare(
-        base=_short(base_ref), head=_short(head_ref), base_sha=base_sha, head_sha=head_sha,
+        base=base, head=head, base_sha=base_sha, head_sha=head_sha,
         merge_base=merge_base, ahead=counts[1], behind=counts[0],
         commits=commits[:MAX_COMPARE_COMMITS], commits_truncated=len(commits) > MAX_COMPARE_COMMITS,
         files=files[:MAX_FILES], files_truncated=len(files) > MAX_FILES,

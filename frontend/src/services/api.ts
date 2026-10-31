@@ -1,5 +1,5 @@
 import type {
-  Analytics, BranchList, Compare, CommitDetails, CommitPage, FileDiff, Reachable,
+  Analytics, BranchList, Compare, CommitDetails, PullRequest, CommitPage, FileDiff, Reachable,
   RepositoryInfo, Snapshot, Strategy, Timeline,
 } from '../types/git'
 
@@ -72,6 +72,10 @@ export const api = {
     request<Compare>('/api/compare' + q({ base, head }), { signal }),
   compareDiff: (base: string, head: string, path: string, signal?: AbortSignal) =>
     request<FileDiff>('/api/compare/diff' + q({ base, head, path }), { signal }),
+  pull: (number: number, signal?: AbortSignal) =>
+    request<PullRequest>(`/api/pulls/${number}`, { signal }),
+  pullDiff: (number: number, path: string, signal?: AbortSignal) =>
+    request<FileDiff>(`/api/pulls/${number}/diff` + q({ path }), { signal }),
   branches: (signal?: AbortSignal) => request<BranchList>('/api/branches', { signal }),
   reachable: (ref: string, signal?: AbortSignal) =>
     request<Reachable>('/api/branches/reachable' + q({ ref }), { signal }),

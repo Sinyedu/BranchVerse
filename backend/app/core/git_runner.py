@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from .errors import (
     GitTimeout,
     GitUnavailable,
     InvalidInput,
+    NotFound,
 )
 
 
@@ -58,6 +60,7 @@ READ_ONLY_SUBCOMMANDS = frozenset(
         "diff-tree",
         "ls-tree",
         "for-each-ref",
+        "show-ref",
         "cat-file",
         "symbolic-ref",
         "merge-base",
@@ -205,7 +208,7 @@ def run_git(
     return result
 
 
-# ------------------------------------------------------------------- cloning
+# ------------------------------------------------------------ network calls
 
 
 def _dir_size(path: Path) -> int:
@@ -228,6 +231,57 @@ def remove_tree(path: Path) -> None:
         shutil.rmtree(path, onexc=_chmod_retry)
 
 
+def _run_bounded(
+    cmd: list[str], *, watch: Path, timeout: float, max_bytes: int, poll: float,
+    timeout_msg: str, size_msg: str,
+) -> tuple[int, str]:
+    """Run a network Git command with a wall-clock limit and a disk-growth limit.
+
+    Returns (returncode, stderr). Kills the process and raises on a breached limit.
+    """
+    try:
+        proc = subprocess.Popen(
+            cmd, shell=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, env=_clean_env(True),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as exc:
+        raise GitUnavailable("The Git executable was not found on PATH.") from exc
+    err = bytearray()
+
+    def _drain() -> None:
+        assert proc.stderr is not None
+        while chunk := proc.stderr.read(4096):
+            if len(err) < _STDERR_LIMIT:
+                err.extend(chunk)
+
+    reader = threading.Thread(target=_drain, daemon=True)
+    reader.start()
+    baseline = _dir_size(watch) if watch.exists() else 0
+    started = time.monotonic()
+    failure: Exception | None = None
+    while True:
+        try:
+            proc.wait(timeout=min(poll, timeout))
+            break
+        except subprocess.TimeoutExpired:
+            pass
+        if time.monotonic() - started > timeout:
+            failure = GitTimeout(timeout_msg)
+        elif watch.exists() and _dir_size(watch) - baseline > max_bytes:
+            failure = GitOutputTooLarge(size_msg)
+        if failure:
+            proc.kill()
+            proc.wait()
+            break
+    reader.join(timeout=2)
+    if proc.stderr:
+        proc.stderr.close()
+    if failure:
+        raise failure
+    return proc.returncode, err.decode("utf-8", errors="replace")
+
+
 def clone_bare(
     url: str,
     dest: Path,
@@ -238,16 +292,15 @@ def clone_bare(
 ) -> None:
     """Blobless bare clone: all commits/trees/refs, no file contents.
 
-    The only network-capable, state-creating Git call in BranchVerse. The caller
-    must pass a URL it built itself from a validated GitHub owner/name. The
-    protocol is restricted, hooks and credential helpers are off, and time and
+    The caller must pass a URL it built itself from a validated GitHub owner/name.
+    The protocol is restricted, hooks and credential helpers are off, and time and
     disk use are bounded.
     """
     dest = Path(dest)
     if not is_cached_repo(dest):
         raise InvalidInput("Clone destination must be inside the cache directory.")
     if not _clone_lock.acquire(blocking=False):
-        raise Busy("Another repository is being downloaded. Try again in a moment.")
+        raise Busy("Another download is in progress. Try again in a moment.")
     try:
         cmd = [
             "git", "--no-pager",
@@ -256,48 +309,16 @@ def clone_bare(
             "clone", "--bare", "--filter=blob:none", "--quiet", "--", url, str(dest),
         ]
         try:
-            proc = subprocess.Popen(
-                cmd, shell=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE, env=_clean_env(True),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            code, raw = _run_bounded(
+                cmd, watch=dest, timeout=timeout, max_bytes=max_bytes, poll=poll,
+                timeout_msg="Downloading took too long and was stopped. Try a smaller repository.",
+                size_msg="That repository is too large to download here.",
             )
-        except OSError as exc:
-            raise GitUnavailable("The Git executable was not found on PATH.") from exc
-        err = bytearray()
-
-        def _drain() -> None:
-            assert proc.stderr is not None
-            while chunk := proc.stderr.read(4096):
-                if len(err) < _STDERR_LIMIT:
-                    err.extend(chunk)
-
-        reader = threading.Thread(target=_drain, daemon=True)
-        reader.start()
-        started = time.monotonic()
-        failure: Exception | None = None
-        while True:
-            try:
-                proc.wait(timeout=min(poll, timeout))
-                break
-            except subprocess.TimeoutExpired:
-                pass
-            if time.monotonic() - started > timeout:
-                failure = GitTimeout("Downloading took too long and was stopped. Try a smaller repository.")
-            elif dest.exists() and _dir_size(dest) > max_bytes:
-                failure = GitOutputTooLarge("That repository is too large to download here.")
-            if failure:
-                proc.kill()
-                proc.wait()
-                break
-        reader.join(timeout=2)
-        if proc.stderr:
-            proc.stderr.close()
-        if failure:
+        except Exception:
             remove_tree(dest)
-            raise failure
-        if proc.returncode != 0:
+            raise
+        if code != 0:
             remove_tree(dest)
-            raw = err.decode("utf-8", errors="replace")
             low = raw.lower()
             if any(k in low for k in ("not found", "could not read username", "authentication", "403", "404")):
                 raise InvalidInput("Repository not found, or it is not public.")
@@ -305,6 +326,123 @@ def clone_bare(
             raise GitCommandError("Download failed: " + (lines[-1][:200] if lines else "unknown error"))
     finally:
         _clone_lock.release()
+
+
+PR_REF_PREFIX = "refs/branchverse/pr/"
+MAX_PR_NUMBER = 10_000_000
+FETCH_TIMEOUT = 120.0
+MAX_FETCH_BYTES = 300 * 1024 * 1024
+
+
+def fetch_pull_ref(repo: Path, number: int, *, timeout: float = FETCH_TIMEOUT, poll: float = 1.0) -> None:
+    """Fetch GitHub's `refs/pull/N/head` into `refs/branchverse/pr/N` (cached clones only).
+
+    The remote name and both ref names are built here from an integer; nothing
+    user-controlled is interpolated except that integer.
+    """
+    repo = Path(repo)
+    if not is_cached_repo(repo):
+        raise InvalidInput("Pull requests can only be fetched for repositories opened from GitHub.")
+    if not isinstance(number, int) or isinstance(number, bool) or not 1 <= number <= MAX_PR_NUMBER:
+        raise InvalidInput("Enter a valid pull request number.")
+    if not _clone_lock.acquire(blocking=False):
+        raise Busy("Another download is in progress. Try again in a moment.")
+    try:
+        cmd = [
+            "git", "-C", str(repo), "--no-pager", "--no-optional-locks",
+            "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false",
+            *_protocol_flags(True),
+            "fetch", "--no-tags", "--filter=blob:none", "--quiet", "--no-write-fetch-head",
+            "origin", f"+refs/pull/{number}/head:{PR_REF_PREFIX}{number}",
+        ]
+        code, raw = _run_bounded(
+            cmd, watch=repo, timeout=timeout, max_bytes=MAX_FETCH_BYTES, poll=poll,
+            timeout_msg="Fetching the pull request took too long and was stopped.",
+            size_msg="That pull request is too large to download here.",
+        )
+        if code != 0:
+            low = raw.lower()
+            if "couldn't find remote ref" in low or "not found" in low or "404" in low:
+                raise NotFound(f"Pull request #{number} was not found.")
+            lines = raw.strip().splitlines()
+            raise GitCommandError("Fetch failed: " + (lines[-1][:200] if lines else "unknown error"))
+    finally:
+        _clone_lock.release()
+
+
+# ------------------------------------------------------------------ streaming
+
+
+def iter_git(
+    repo: Path,
+    args: list[str],
+    *,
+    sep: bytes = b"\x00",
+    timeout: float = 60.0,
+    max_bytes: int = 256 * 1024 * 1024,
+) -> Iterator[bytes]:
+    """Yield `sep`-separated records from a Git command without holding all output.
+
+    Memory stays proportional to one record. Same safety rules as `run_git`;
+    limits are enforced while streaming and the process is always reaped.
+    """
+    cmd = build_command(repo, args)
+    try:
+        proc = subprocess.Popen(
+            cmd, shell=False, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, env=_clean_env(is_cached_repo(repo)),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except FileNotFoundError as exc:
+        raise GitUnavailable("The Git executable was not found on PATH.") from exc
+    except OSError as exc:
+        raise GitUnavailable("Git could not be started.") from exc
+
+    timed_out = threading.Event()
+    timer = threading.Timer(timeout, lambda: (timed_out.set(), proc.kill()))
+    timer.start()
+    err = bytearray()
+
+    def _drain() -> None:
+        assert proc.stderr is not None
+        while chunk := proc.stderr.read(4096):
+            if len(err) < _STDERR_LIMIT:
+                err.extend(chunk)
+
+    reader = threading.Thread(target=_drain, daemon=True)
+    reader.start()
+    finished = False
+    try:
+        assert proc.stdout is not None
+        pending = b""
+        total = 0
+        while chunk := proc.stdout.read(65536):
+            total += len(chunk)
+            if total > max_bytes:
+                raise GitOutputTooLarge("Git produced more output than BranchVerse will process.")
+            parts = (pending + chunk).split(sep)
+            pending = parts.pop()
+            yield from parts
+        if pending:
+            yield pending
+        proc.wait()
+        finished = True
+        if timed_out.is_set():
+            raise GitTimeout("Git took too long to respond and was stopped.")
+        if proc.returncode != 0:
+            lines = err.decode("utf-8", errors="replace").strip().splitlines()
+            raise GitCommandError(lines[0][:300] if lines else "Git command failed.")
+    finally:
+        timer.cancel()
+        if not finished and proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        reader.join(timeout=2)
+        for stream in (proc.stdout, proc.stderr):
+            if stream:
+                stream.close()
+        if timed_out.is_set() and not finished:
+            pass  # surfaced as GitTimeout above when the stream ended normally
 
 
 def prune_cache(max_age_hours: float = 24.0) -> int:
