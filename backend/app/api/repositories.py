@@ -5,7 +5,9 @@ from fastapi import APIRouter, Path, Query, Request
 from ..core import cache
 from ..core.errors import NoRepository
 from ..schemas import git as s
-from ..services import analytics_service, git_service, pull_service, strategy_service, timeline_service
+from ..services import (
+    analytics_service, git_service, pull_service, release_service, strategy_service, timeline_service,
+)
 from ..services.git_service import Repo
 
 router = APIRouter(prefix="/api")
@@ -91,6 +93,11 @@ def timeline(request: Request):
 @router.get("/timeline/{sha}", response_model=s.Snapshot)
 def snapshot(sha: str, request: Request):
     return timeline_service.get_snapshot(_repo(request), sha)
+
+
+@router.get("/releases", response_model=s.ReleaseTimeline)
+def releases(request: Request):
+    return release_service.get_releases(_repo(request))
 
 
 @router.get("/strategy", response_model=s.Strategy)

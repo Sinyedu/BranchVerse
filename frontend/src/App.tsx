@@ -14,6 +14,8 @@ const CompareView = lazy(() => import('./components/compare/CompareView').then((
 const StrategyView = lazy(() => import('./components/strategy/StrategyView').then((m) => ({ default: m.StrategyView })))
 const GitTimeMachine = lazy(() => import('./components/timeline/GitTimeMachine').then((m) => ({ default: m.GitTimeMachine })))
 
+const ReleaseTimeline = lazy(() => import('./components/releases/ReleaseTimeline').then((m) => ({ default: m.ReleaseTimeline })))
+
 export default function App() {
   const r = useRepository()
   const [view, setView] = useState<View>('graph')
@@ -46,6 +48,7 @@ export default function App() {
   } else if (view === 'compare') content = <CompareView isGitHub={!!r.repo?.remote_url} />
   else if (view === 'strategy') content = <StrategyView />
   else if (view === 'analytics') content = <AnalyticsDashboard />
+  else if (view === 'releases') content = <ReleaseTimeline />
   else content = <GitTimeMachine />
 
   const inspector = view === 'graph' && !showWelcome && !r.repo?.is_empty
