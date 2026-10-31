@@ -1,0 +1,66 @@
+name: Auto-tag release
+
+# When a pull request is merged into master, tag the merge commit and publish a GitHub Release.
+# The version bump comes from the PR label: major | minor | patch | skip.
+# No label means patch. This runs only on GitHub; the BranchVerse app itself stays read-only.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-tag
+  cancel-in-progress: false  # queue merges so two releases never pick the same version
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Decide the bump
+        id: bump
+        env:
+          # Labels and titles are untrusted input: pass them through env, never into the script text.
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          has() { echo "$LABELS" | jq -e --arg l "$1" 'index($l) != null' > /dev/null; }
+          if has skip; then bump=skip
+          elif has major; then bump=major
+          elif has minor; then bump=minor
+          else bump=patch
+          fi
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag and release
+        if: steps.bump.outputs.bump != 'skip'
+        env:
+          BUMP: ${{ steps.bump.outputs.bump }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing="$(git tag --points-at "$SHA" --list 'v[0-9]*.[0-9]*.[0-9]*')"
+          if [ -n "$existing" ]; then
+            echo "Commit already tagged ($existing); nothing to do."
+            exit 0
+          fi
+          latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+          next="$(bash .github/scripts/next-version.sh "$latest" "$BUMP")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$next" "$SHA" -m "$PR_TITLE (#$PR_NUMBER)"
+          git push origin "refs/tags/$next"
+          gh release create "$next" --verify-tag --generate-notes --title "$next"
+          echo "Released $next ($BUMP bump from ${latest:-no previous tag})" >> "$GITHUB_STEP_SUMMARY"

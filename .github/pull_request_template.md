@@ -22,6 +22,11 @@
 
 <!-- Manual check, screenshots, or output -->
 
+## Release
+
+Merging into `master` tags a release automatically. Add **one** label to choose the version bump:
+`major`, `minor`, `patch` (the default when unlabelled), or `skip` for no release.
+
 ## Docs
 
 - [ ] README / roadmap updated if behaviour or limitations changed
