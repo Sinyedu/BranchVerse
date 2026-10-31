@@ -235,3 +235,23 @@ class PullMeta(BaseModel):
 class PullRequest(BaseModel):
     meta: PullMeta
     compare: Compare
+
+
+class Release(BaseModel):
+    name: str
+    sha: str
+    short_sha: str
+    timestamp: int
+    annotated: bool
+    message: str | None = None
+    previous: str | None = None
+    commits: int | None = None
+    contributors: int | None = None
+    days_since_previous: float | None = None
+
+
+class ReleaseTimeline(BaseModel):
+    releases: list[Release]
+    total_tags: int
+    truncated: bool
+    note: str

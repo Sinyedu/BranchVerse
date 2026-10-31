@@ -165,3 +165,17 @@ export interface PullMeta {
   note: string | null
 }
 export interface PullRequest { meta: PullMeta; compare: Compare }
+
+export interface Release {
+  name: string
+  sha: string
+  short_sha: string
+  timestamp: number
+  annotated: boolean
+  message: string | null
+  previous: string | null
+  commits: number | null
+  contributors: number | null
+  days_since_previous: number | null
+}
+export interface ReleaseTimeline { releases: Release[]; total_tags: number; truncated: boolean; note: string }

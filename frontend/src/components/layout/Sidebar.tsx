@@ -1,7 +1,7 @@
-import { BarChart3, BookOpen, GitBranch, GitCommitHorizontal, GitPullRequest, History, Network } from 'lucide-react'
+import { BarChart3, BookOpen, GitBranch, GitCommitHorizontal, GitPullRequest, History, Network, Tag } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-export type View = 'graph' | 'branches' | 'compare' | 'strategy' | 'analytics' | 'time' | 'learn'
+export type View = 'graph' | 'branches' | 'compare' | 'strategy' | 'analytics' | 'time' | 'releases' | 'learn'
 
 const ITEMS: { id: View; label: string; icon: LucideIcon; needsRepo: boolean }[] = [
   { id: 'graph', label: 'Commits', icon: GitCommitHorizontal, needsRepo: true },
@@ -10,6 +10,7 @@ const ITEMS: { id: View; label: string; icon: LucideIcon; needsRepo: boolean }[]
   { id: 'strategy', label: 'Strategy', icon: Network, needsRepo: true },
   { id: 'analytics', label: 'Analytics', icon: BarChart3, needsRepo: true },
   { id: 'time', label: 'Time Machine', icon: History, needsRepo: true },
+  { id: 'releases', label: 'Releases', icon: Tag, needsRepo: true },
   { id: 'learn', label: 'Learn', icon: BookOpen, needsRepo: false },
 ]
 

@@ -1,6 +1,6 @@
 import type {
   Analytics, BranchList, Compare, CommitDetails, PullRequest, CommitPage, FileDiff, Reachable,
-  RepositoryInfo, Snapshot, Strategy, Timeline,
+  ReleaseTimeline, RepositoryInfo, Snapshot, Strategy, Timeline,
 } from '../types/git'
 
 export class ApiError extends Error {
@@ -81,6 +81,7 @@ export const api = {
     request<Reachable>('/api/branches/reachable' + q({ ref }), { signal }),
   analytics: (signal?: AbortSignal) => request<Analytics>('/api/analytics', { signal }),
   strategy: (signal?: AbortSignal) => request<Strategy>('/api/strategy', { signal }),
+  releases: (signal?: AbortSignal) => request<ReleaseTimeline>('/api/releases', { signal }),
   timeline: (signal?: AbortSignal) => request<Timeline>('/api/timeline', { signal }),
   snapshot: (sha: string, signal?: AbortSignal) => request<Snapshot>(`/api/timeline/${sha}`, { signal }),
 }

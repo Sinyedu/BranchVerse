@@ -21,6 +21,7 @@ through commits, branches, merges and the common branching strategies with small
 | **Strategy** | Describes what the history looks like (trunk-based / feature-branch / GitFlow-like) with the evidence behind the label |
 | **Analytics** | Unique commits, contributors, commits per week, additions/deletions per week, scope stated for every metric |
 | **Time Machine** | Slide through HEAD's first-parent history; file lists and changes are read from Git objects — no checkout |
+| **Releases** | Tags as a release timeline: commits, contributors and days since the previous tag, newest 100 tags |
 | **Learn** | Seven lessons with step-by-step illustrated graphs (clearly marked as invented examples) |
 
 ## Architecture
@@ -160,4 +161,4 @@ cd frontend && pnpm test -- --run && pnpm build
 ## Roadmap
 
 Optional GitHub token for higher API limits, multiple saved repositories and side-by-side strategy comparison, interactive "sandbox" lessons with guided
-exercises, tag/release timeline, bare-repo and worktree polish, SHA-256 support.
+exercises, bare-repo and worktree polish, SHA-256 support.
